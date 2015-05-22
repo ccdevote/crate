@@ -21,13 +21,20 @@
 
 package io.crate.integrationtests;
 
+import com.carrotsearch.randomizedtesting.annotations.Repeat;
 import io.crate.action.sql.SQLActionException;
+import io.crate.jobs.JobContextService;
+import io.crate.jobs.JobExecutionContext;
 import io.crate.testing.TestingHelpers;
+import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
+import java.lang.reflect.Field;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
@@ -35,7 +42,7 @@ import static org.hamcrest.core.Is.is;
 
 public class ArithmeticIntegrationTest extends SQLTransportIntegrationTest {
 
-    private Setup setup = new Setup(sqlExecutor);
+    Setup setup = new Setup(sqlExecutor);
 
     @Rule
     public ExpectedException expectedException = ExpectedException.none();
@@ -262,9 +269,36 @@ public class ArithmeticIntegrationTest extends SQLTransportIntegrationTest {
         execute("select random(), random() from sys.cluster limit 1");
         assertThat(response.rows()[0][0], is(not(response.rows()[0][1])));
 
-        this.setup.groupBySetup();
-        execute("select random(), random() from characters limit 1");
+        execute("create table t (name string) ");
+        ensureYellow();
+        execute("insert into t (name) values ('Marvin')");
+        execute("refresh table t");
+
+        execute("select random(), random() from t");
         assertThat(response.rows()[0][0], is(not(response.rows()[0][1])));
+    }
+
+    @Test
+    public void testFoo() throws Exception {
+        setup.groupBySetup();
+        execute("select name from characters limit 1");
+
+        assertBusy(new Runnable() {
+            @Override
+            public void run() {
+                for (JobContextService jobContextService : internalCluster().getInstances(JobContextService.class)) {
+                    Field activeContexts = null;
+                    try {
+                        activeContexts = jobContextService.getClass().getDeclaredField("activeContexts");
+                        activeContexts.setAccessible(true);
+                        Map<UUID, JobExecutionContext> contextMap = (Map<UUID, JobExecutionContext>) activeContexts.get(jobContextService);
+                        assertThat(contextMap.size(), is(0));
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        });
     }
 
     @Test
